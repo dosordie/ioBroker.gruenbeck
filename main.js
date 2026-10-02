@@ -68,6 +68,13 @@ class Gruenbeck extends utils.Adapter {
     this.wsCurrentCount = 0;
     this.wsCurrSlowCount = 0;
     this.wsSignalRPingCount = 0;
+    this.regenKeepAliveEnabled = false;
+    this.regenKeepAliveInterval = null;
+    this.regenKeepAliveInFlight = false;
+    this.regenKeepAliveUseEnter = false;
+    this.regenKeepAliveCount = 0;
+    this.regenerationActive = false;
+    this.lastCurrentTimestamp = 0;
     this.isUnloading = false;
     this.on('ready', this.onReady.bind(this));
     this.on('objectChange', this.onObjectChange.bind(this));
@@ -422,6 +429,9 @@ class Gruenbeck extends utils.Adapter {
           this.log.debug('refreshSD response:');
           this.log.debug(JSON.stringify(response.data));
           const argument = response.data;
+          if (argument && Object.prototype.hasOwnProperty.call(argument, 'mregstatus')) {
+            this.updateRegenerationState(argument.mregstatus);
+          }
           for (const key in argument) {
             await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key, {
               type: 'state',
@@ -788,6 +798,12 @@ class Gruenbeck extends utils.Adapter {
       heartbeatTimeoutCount: { name: 'WebSocket Heartbeat Timeouts seit Adapterstart', type: 'number' },
       reconnectCount: { name: 'WebSocket Reconnects seit Adapterstart', type: 'number' },
       reconnectDelaySec: { name: 'Nächster WebSocket Reconnect in Sekunden', type: 'number' },
+      regenerationActive: { name: 'Regeneration aktiv', type: 'boolean' },
+      regenKeepAliveActive: { name: 'Regeneration Live-Stream Keepalive aktiv', type: 'boolean' },
+      regenKeepAliveMode: { name: 'Regeneration Live-Stream Modus', type: 'string' },
+      regenKeepAliveCount: { name: 'Regeneration Keepalive Aufrufe seit Adapterstart', type: 'number' },
+      lastRegenKeepAlive: { name: 'Letzter Regeneration Keepalive', type: 'string' },
+      lastManualRefreshTest: { name: 'Letzter manueller refreshSD Test', type: 'string' },
     };
 
     for (const id in diagnostics) {
@@ -804,6 +820,38 @@ class Gruenbeck extends utils.Adapter {
       });
     }
 
+    await this.setObjectNotExistsAsync(prefix + '.testRefresh', {
+      type: 'state',
+      common: {
+        name: 'Nur refreshSD testen',
+        type: 'boolean',
+        role: 'button',
+        write: true,
+        read: true,
+        def: false,
+      },
+      native: {},
+    });
+    await this.setObjectNotExistsAsync(prefix + '.keepAliveDuringRegeneration', {
+      type: 'state',
+      common: {
+        name: 'Live-Stream während Regeneration aktiv halten',
+        type: 'boolean',
+        role: 'switch',
+        write: true,
+        read: true,
+        def: false,
+      },
+      native: {},
+    });
+
+    const keepAliveState = await this.getStateAsync(prefix + '.keepAliveDuringRegeneration');
+    this.regenKeepAliveEnabled = !!(keepAliveState && keepAliveState.val === true);
+    if (!keepAliveState || typeof keepAliveState.val !== 'boolean') {
+      this.setState(prefix + '.keepAliveDuringRegeneration', false, true);
+    }
+    this.setState(prefix + '.testRefresh', false, true);
+
     this.setRealtimeDiagnostic('wsConnected', false);
     this.setRealtimeDiagnostic('currentCount', 0);
     this.setRealtimeDiagnostic('currSlowCount', 0);
@@ -811,6 +859,10 @@ class Gruenbeck extends utils.Adapter {
     this.setRealtimeDiagnostic('heartbeatTimeoutCount', 0);
     this.setRealtimeDiagnostic('reconnectCount', 0);
     this.setRealtimeDiagnostic('reconnectDelaySec', 0);
+    this.setRealtimeDiagnostic('regenerationActive', false);
+    this.setRealtimeDiagnostic('regenKeepAliveActive', false);
+    this.setRealtimeDiagnostic('regenKeepAliveMode', 'off');
+    this.setRealtimeDiagnostic('regenKeepAliveCount', 0);
   }
 
   setRealtimeDiagnostic(id, value) {
@@ -819,6 +871,115 @@ class Gruenbeck extends utils.Adapter {
     }
     const prefix = (mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.Diagnostics.';
     this.setState(prefix + id, value, true);
+  }
+
+  updateRegenerationState(status) {
+    const numericStatus = Number(status);
+    if (!Number.isFinite(numericStatus)) {
+      return;
+    }
+
+    const active = numericStatus !== 0;
+    if (this.regenerationActive !== active) {
+      this.regenerationActive = active;
+      this.setRealtimeDiagnostic('regenerationActive', active);
+      this.log.info('Regeneration ' + (active ? 'active' : 'finished') + ' (mregstatus=' + numericStatus + ')');
+
+      if (!active) {
+        this.regenKeepAliveUseEnter = false;
+        this.stopRegenerationKeepAlive();
+      } else if (this.regenKeepAliveEnabled) {
+        this.startRegenerationKeepAlive();
+      }
+    }
+  }
+
+  startRegenerationKeepAlive() {
+    if (
+      this.isUnloading ||
+      !this.regenKeepAliveEnabled ||
+      !this.regenerationActive ||
+      this.regenKeepAliveInterval
+    ) {
+      return;
+    }
+
+    this.log.info('Regeneration live stream keepalive started (25s)');
+    this.setRealtimeDiagnostic('regenKeepAliveActive', true);
+    this.setRealtimeDiagnostic('regenKeepAliveMode', this.regenKeepAliveUseEnter ? 'enter+refresh' : 'refresh');
+
+    this.regenKeepAliveInterval = setInterval(() => {
+      this.runRegenerationKeepAlive();
+    }, 25 * 1000);
+  }
+
+  stopRegenerationKeepAlive() {
+    if (this.regenKeepAliveInterval) {
+      clearInterval(this.regenKeepAliveInterval);
+      this.regenKeepAliveInterval = null;
+    }
+    this.regenKeepAliveInFlight = false;
+    this.setRealtimeDiagnostic('regenKeepAliveActive', false);
+    if (!this.regenKeepAliveEnabled) {
+      this.setRealtimeDiagnostic('regenKeepAliveMode', 'off');
+    }
+  }
+
+  async runRegenerationKeepAlive() {
+    if (
+      this.isUnloading ||
+      !this.regenKeepAliveEnabled ||
+      !this.regenerationActive ||
+      this.regenKeepAliveInFlight
+    ) {
+      return;
+    }
+
+    this.regenKeepAliveInFlight = true;
+    try {
+      const currentAge = this.lastCurrentTimestamp ? Date.now() - this.lastCurrentTimestamp : Number.POSITIVE_INFINITY;
+
+      // During regeneration Current normally arrives about once per second.
+      // If it has gone stale, refresh-only was not sufficient, so use enter+refresh
+      // for the remainder of this regeneration.
+      if (currentAge > 8 * 1000) {
+        if (!this.regenKeepAliveUseEnter) {
+          this.log.info('Regeneration Current stream is stale; switching keepalive to enter+refresh');
+        }
+        this.regenKeepAliveUseEnter = true;
+      }
+
+      if (this.regenKeepAliveUseEnter) {
+        await this.enterSD();
+      }
+      await this.refreshSD();
+
+      this.regenKeepAliveCount++;
+      const now = new Date().toISOString();
+      this.setRealtimeDiagnostic('regenKeepAliveCount', this.regenKeepAliveCount);
+      this.setRealtimeDiagnostic('lastRegenKeepAlive', now);
+      this.setRealtimeDiagnostic('regenKeepAliveMode', this.regenKeepAliveUseEnter ? 'enter+refresh' : 'refresh');
+    } catch (error) {
+      const errorText = error && error.message ? error.message : String(error);
+      this.log.error('Regeneration live stream keepalive failed: ' + errorText);
+      this.setRealtimeDiagnostic('lastError', 'Regeneration keepalive failed: ' + errorText);
+    } finally {
+      this.regenKeepAliveInFlight = false;
+    }
+  }
+
+  async runManualRefreshTest() {
+    const now = new Date().toISOString();
+    this.log.info('Manual realtime refresh test started (refreshSD only)');
+    try {
+      await this.refreshSD();
+      this.setRealtimeDiagnostic('lastManualRefreshTest', now + ' OK');
+      this.log.info('Manual realtime refresh test successful');
+    } catch (error) {
+      const errorText = error && error.message ? error.message : String(error);
+      this.setRealtimeDiagnostic('lastManualRefreshTest', now + ' ERROR: ' + errorText);
+      this.log.error('Manual realtime refresh test failed: ' + errorText);
+    }
   }
 
   scheduleMgWebSocketReconnect(reason) {
@@ -1048,8 +1209,12 @@ class Gruenbeck extends utils.Adapter {
                       message.arguments.forEach(async (argument) => {
                         if (argument && argument.type === 'Current') {
                           this.wsCurrentCount++;
+                          this.lastCurrentTimestamp = Date.now();
                           this.setRealtimeDiagnostic('lastCurrent', messageTime);
                           this.setRealtimeDiagnostic('currentCount', this.wsCurrentCount);
+                          if (Object.prototype.hasOwnProperty.call(argument, 'mregstatus')) {
+                            this.updateRegenerationState(argument.mregstatus);
+                          }
                         } else if (argument && argument.type === 'CurrSlow') {
                           this.wsCurrSlowCount++;
                           this.setRealtimeDiagnostic('lastCurrSlow', messageTime);
@@ -1264,6 +1429,7 @@ class Gruenbeck extends utils.Adapter {
       this.isUnloading = true;
       clearTimeout(this.wsReconnectTimeout);
       clearInterval(this.wsHeartbeatInterval);
+      clearInterval(this.regenKeepAliveInterval);
       clearTimeout(heartBeatTimeout);
       if (mgDeviceId) {
         this.leaveSD();
@@ -1314,6 +1480,25 @@ class Gruenbeck extends utils.Adapter {
    * @param {ioBroker.State | null | undefined} state
    */
   onStateChange(id, state) {
+    if (state && state.ack === false && id.endsWith('.Stream.Diagnostics.testRefresh')) {
+      this.setState(id, false, true);
+      this.runManualRefreshTest();
+      return;
+    }
+
+    if (state && state.ack === false && id.endsWith('.Stream.Diagnostics.keepAliveDuringRegeneration')) {
+      this.regenKeepAliveEnabled = state.val === true;
+      this.setState(id, this.regenKeepAliveEnabled, true);
+      this.log.info('Regeneration live stream keepalive ' + (this.regenKeepAliveEnabled ? 'enabled' : 'disabled'));
+      if (this.regenKeepAliveEnabled && this.regenerationActive) {
+        this.startRegenerationKeepAlive();
+      } else if (!this.regenKeepAliveEnabled) {
+        this.regenKeepAliveUseEnter = false;
+        this.stopRegenerationKeepAlive();
+      }
+      return;
+    }
+
     if (id.indexOf('.parameters.') !== -1 && state.ack === false) {
       const action = id.split('.').slice(-1)[0];
       const data = {};
