@@ -11,13 +11,13 @@ systemDictionary = {
     en: 'During regeneration, the realtime stream is kept active via refreshSD every 25 seconds.',
     de: 'Während einer Regeneration wird der Realtime-Stream per refreshSD alle 25 Sekunden aktiv gehalten.',
   },
-  'Cloud /update Abfrage deaktivieren': {
-    en: 'Disable cloud /update request',
-    de: 'Cloud /update Abfrage deaktivieren',
+  'SE-Kompatibilität: /update-Abfrage deaktivieren': {
+    en: 'SE compatibility: disable /update request',
+    de: 'SE-Kompatibilität: /update-Abfrage deaktivieren',
   },
-  'Deaktiviert den zusätzlichen /update API-Aufruf, falls dieser mit HTTP 404 beantwortet wird. Realtime enter/refresh und WebSocket bleiben aktiv.': {
-    en: 'Disables the additional /update API request if it returns HTTP 404. Realtime enter/refresh and WebSocket remain active.',
-    de: 'Deaktiviert den zusätzlichen /update API-Aufruf, falls dieser mit HTTP 404 beantwortet wird. Realtime enter/refresh und WebSocket bleiben aktiv.',
+  'Der /update-Endpunkt wurde ursprünglich für softliQ.SE ergänzt. Bei softliQ.D wird er typischerweise mit HTTP 404 beantwortet und kann hier deaktiviert werden. Geräteinfos, Parameter, Realtime enter/refresh und WebSocket bleiben aktiv.': {
+    en: 'The /update endpoint was originally added for softliQ.SE. On softliQ.D it typically returns HTTP 404 and can be disabled here. Device information, parameters, realtime enter/refresh and WebSocket remain active.',
+    de: 'Der /update-Endpunkt wurde ursprünglich für softliQ.SE ergänzt. Bei softliQ.D wird er typischerweise mit HTTP 404 beantwortet und kann hier deaktiviert werden. Geräteinfos, Parameter, Realtime enter/refresh und WebSocket bleiben aktiv.',
   },
   'gruenbeck adapter settings': {
     en: 'Adapter settings for gruenbeck',
