@@ -147,7 +147,7 @@ class Gruenbeck extends utils.Adapter {
       });
       this.connectMgWebSocket();
       if (this.config.mgDisableUpdateCall === true) {
-        this.log.info('Cloud /update request disabled by configuration');
+        this.log.info('Legacy softliQ.SE /update compatibility request disabled by configuration');
       } else {
         this.sdUpdate();
       }
