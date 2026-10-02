@@ -870,7 +870,8 @@ class Gruenbeck extends utils.Adapter {
       .then((response) => {
         this.log.debug(JSON.stringify(response.data));
         if (!response.data) {
-          this.log.debug('No data');
+          this.log.warn('Realtime negotiate returned no data');
+          this.scheduleMgWebSocketReconnect('API negotiate empty response');
           return;
         }
 
@@ -891,6 +892,8 @@ class Gruenbeck extends utils.Adapter {
           .then((response) => {
             this.log.debug(JSON.stringify(response.data));
             if (!response.data) {
+              this.log.warn('SignalR negotiate returned no data');
+              this.scheduleMgWebSocketReconnect('SignalR negotiate empty response');
               return;
             }
 
@@ -917,11 +920,9 @@ class Gruenbeck extends utils.Adapter {
 
               socket.on('open', async () => {
                 this.log.debug('WS connected');
-                this.wsReconnectDelay = 5000;
                 this.setRealtimeDiagnostic('wsConnected', true);
                 this.setRealtimeDiagnostic('lastOpen', new Date().toISOString());
                 this.setRealtimeDiagnostic('lastError', '');
-                this.setRealtimeDiagnostic('reconnectDelaySec', 0);
 
                 socket.isAlive = true;
                 clearInterval(this.wsHeartbeatInterval);
@@ -952,6 +953,8 @@ class Gruenbeck extends utils.Adapter {
                 try {
                   await this.enterSD();
                   await this.refreshSD();
+                  this.wsReconnectDelay = 5000;
+                  this.setRealtimeDiagnostic('reconnectDelaySec', 0);
                 } catch (error) {
                   const errorText = error && error.message ? error.message : String(error);
                   this.log.error('Failed to activate realtime stream: ' + errorText);
