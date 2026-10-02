@@ -70,8 +70,20 @@
       "pl": "Adapter ioBroker do urządzeń Grünbeck Wasseraufbereitung.",
       "zh-cn": "适用于GrünbeckWasseraufbereitung设备的ioBroker适配器。"
     },
-    "authors": ["TA2k <tombox@nomail.de>"],
-    "keywords": ["gruenbeck", "grünbeck", "wasseraufbereitung", "softliQ", "SC18", "SC23", "SD18", "SD23", "SD21"],
+    "authors": [
+      "TA2k <tombox@nomail.de>"
+    ],
+    "keywords": [
+      "gruenbeck",
+      "grünbeck",
+      "wasseraufbereitung",
+      "softliQ",
+      "SC18",
+      "SC23",
+      "SD18",
+      "SD23",
+      "SD21"
+    ],
     "license": "MIT",
     "platform": "Javascript/Node.js",
     "main": "main.js",
@@ -121,7 +133,9 @@
     "mgInterval": 360,
     "mgUpdateInterval": 60,
     "mgReplace": false,
-    "mgIndex": 0
+    "mgIndex": 0,
+    "mgRegenKeepAlive": false,
+    "mgDisableUpdateCall": false
   },
   "objects": [],
   "instanceObjects": [
