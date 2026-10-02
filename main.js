@@ -146,7 +146,11 @@ class Gruenbeck extends utils.Adapter {
         this.log.error('Failed to get water');
       });
       this.connectMgWebSocket();
-      this.sdUpdate();
+      if (this.config.mgDisableUpdateCall === true) {
+        this.log.info('Cloud /update request disabled by configuration');
+      } else {
+        this.sdUpdate();
+      }
       allInterval = setInterval(() => {
         this.parseMgInfos();
       }, 1 * 60 * 60 * 1000); //1hour
@@ -182,10 +186,12 @@ class Gruenbeck extends utils.Adapter {
             });
           });
       }, this.config.mgInterval * 1000);
-      this.updateInterval = this.setInterval(() => {
-        this.log.debug('Start update');
-        this.sdUpdate();
-      }, this.config.mgUpdateInterval * 1000);
+      if (this.config.mgDisableUpdateCall !== true) {
+        this.updateInterval = this.setInterval(() => {
+          this.log.debug('Start update');
+          this.sdUpdate();
+        }, this.config.mgUpdateInterval * 1000);
+      }
     } else {
       this.log.warn('[START] No IP-address set');
     }
@@ -845,11 +851,8 @@ class Gruenbeck extends utils.Adapter {
       native: {},
     });
 
-    const keepAliveState = await this.getStateAsync(prefix + '.keepAliveDuringRegeneration');
-    this.regenKeepAliveEnabled = !!(keepAliveState && keepAliveState.val === true);
-    if (!keepAliveState || typeof keepAliveState.val !== 'boolean') {
-      this.setState(prefix + '.keepAliveDuringRegeneration', false, true);
-    }
+    this.regenKeepAliveEnabled = this.config.mgRegenKeepAlive === true;
+    this.setState(prefix + '.keepAliveDuringRegeneration', this.regenKeepAliveEnabled, true);
     this.setState(prefix + '.testRefresh', false, true);
 
     this.setRealtimeDiagnostic('wsConnected', false);
