@@ -861,7 +861,7 @@ class Gruenbeck extends utils.Adapter {
     this.setRealtimeDiagnostic('reconnectDelaySec', 0);
     this.setRealtimeDiagnostic('regenerationActive', false);
     this.setRealtimeDiagnostic('regenKeepAliveActive', false);
-    this.setRealtimeDiagnostic('regenKeepAliveMode', 'off');
+    this.setRealtimeDiagnostic('regenKeepAliveMode', this.regenKeepAliveEnabled ? 'standby' : 'off');
     this.setRealtimeDiagnostic('regenKeepAliveCount', 0);
   }
 
@@ -920,9 +920,7 @@ class Gruenbeck extends utils.Adapter {
     }
     this.regenKeepAliveInFlight = false;
     this.setRealtimeDiagnostic('regenKeepAliveActive', false);
-    if (!this.regenKeepAliveEnabled) {
-      this.setRealtimeDiagnostic('regenKeepAliveMode', 'off');
-    }
+    this.setRealtimeDiagnostic('regenKeepAliveMode', this.regenKeepAliveEnabled ? 'standby' : 'off');
   }
 
   async runRegenerationKeepAlive() {
@@ -1481,14 +1479,15 @@ class Gruenbeck extends utils.Adapter {
    */
   onStateChange(id, state) {
     if (state && state.ack === false && id.endsWith('.Stream.Diagnostics.testRefresh')) {
-      this.setState(id, false, true);
+      this.setRealtimeDiagnostic('testRefresh', false);
       this.runManualRefreshTest();
       return;
     }
 
     if (state && state.ack === false && id.endsWith('.Stream.Diagnostics.keepAliveDuringRegeneration')) {
       this.regenKeepAliveEnabled = state.val === true;
-      this.setState(id, this.regenKeepAliveEnabled, true);
+      this.setRealtimeDiagnostic('keepAliveDuringRegeneration', this.regenKeepAliveEnabled);
+      this.setRealtimeDiagnostic('regenKeepAliveMode', this.regenKeepAliveEnabled ? 'standby' : 'off');
       this.log.info('Regeneration live stream keepalive ' + (this.regenKeepAliveEnabled ? 'enabled' : 'disabled'));
       if (this.regenKeepAliveEnabled && this.regenerationActive) {
         this.startRegenerationKeepAlive();
