@@ -61,7 +61,10 @@ class Gruenbeck extends utils.Adapter {
       name: 'gruenbeck',
     });
     this.wsReconnectTimeout = null;
+    this.wsReconnectDelay = 5000;
     this.wsReconnectCount = 0;
+    this.wsHeartbeatInterval = null;
+    this.wsHeartbeatTimeoutCount = 0;
     this.wsCurrentCount = 0;
     this.wsCurrSlowCount = 0;
     this.wsSignalRPingCount = 0;
@@ -770,7 +773,10 @@ class Gruenbeck extends utils.Adapter {
       lastCloseReason: { name: 'Letzter WebSocket Close Grund', type: 'string' },
       lastError: { name: 'Letzter WebSocket Fehler', type: 'string' },
       lastWsMessage: { name: 'Letzte WebSocket Nachricht', type: 'string' },
+      lastPong: { name: 'Letztes WebSocket Pong', type: 'string' },
       lastSignalRPing: { name: 'Letzter SignalR Ping (type 6)', type: 'string' },
+      lastSignalRClose: { name: 'Letztes SignalR Close (type 7)', type: 'string' },
+      lastSignalRCloseError: { name: 'Letzter SignalR Close Fehler', type: 'string' },
       lastCurrent: { name: 'Letztes Current Telegramm', type: 'string' },
       lastCurrSlow: { name: 'Letztes CurrSlow Telegramm', type: 'string' },
       lastMessageTarget: { name: 'Letztes SignalR Target', type: 'string' },
@@ -779,7 +785,9 @@ class Gruenbeck extends utils.Adapter {
       currentCount: { name: 'Current Telegramme seit Adapterstart', type: 'number' },
       currSlowCount: { name: 'CurrSlow Telegramme seit Adapterstart', type: 'number' },
       signalRPingCount: { name: 'SignalR Pings seit Adapterstart', type: 'number' },
+      heartbeatTimeoutCount: { name: 'WebSocket Heartbeat Timeouts seit Adapterstart', type: 'number' },
       reconnectCount: { name: 'WebSocket Reconnects seit Adapterstart', type: 'number' },
+      reconnectDelaySec: { name: 'Nächster WebSocket Reconnect in Sekunden', type: 'number' },
     };
 
     for (const id in diagnostics) {
@@ -800,7 +808,9 @@ class Gruenbeck extends utils.Adapter {
     this.setRealtimeDiagnostic('currentCount', 0);
     this.setRealtimeDiagnostic('currSlowCount', 0);
     this.setRealtimeDiagnostic('signalRPingCount', 0);
+    this.setRealtimeDiagnostic('heartbeatTimeoutCount', 0);
     this.setRealtimeDiagnostic('reconnectCount', 0);
+    this.setRealtimeDiagnostic('reconnectDelaySec', 0);
   }
 
   setRealtimeDiagnostic(id, value) {
@@ -815,7 +825,12 @@ class Gruenbeck extends utils.Adapter {
     if (this.isUnloading || this.wsReconnectTimeout) {
       return;
     }
-    this.log.info('Websocket reconnect in 5 seconds (' + reason + ')');
+
+    const reconnectDelay = this.wsReconnectDelay;
+    const reconnectDelaySec = Math.round(reconnectDelay / 1000);
+    this.log.info('Websocket reconnect in ' + reconnectDelaySec + ' seconds (' + reason + ')');
+    this.setRealtimeDiagnostic('reconnectDelaySec', reconnectDelaySec);
+
     this.wsReconnectTimeout = setTimeout(() => {
       this.wsReconnectTimeout = null;
       if (this.isUnloading) {
@@ -824,7 +839,9 @@ class Gruenbeck extends utils.Adapter {
       this.wsReconnectCount++;
       this.setRealtimeDiagnostic('reconnectCount', this.wsReconnectCount);
       this.connectMgWebSocket();
-    }, 5000);
+    }, reconnectDelay);
+
+    this.wsReconnectDelay = Math.min(reconnectDelay * 2, 5 * 60 * 1000);
   }
 
   connectMgWebSocket() {
@@ -900,9 +917,37 @@ class Gruenbeck extends utils.Adapter {
 
               socket.on('open', async () => {
                 this.log.debug('WS connected');
+                this.wsReconnectDelay = 5000;
                 this.setRealtimeDiagnostic('wsConnected', true);
                 this.setRealtimeDiagnostic('lastOpen', new Date().toISOString());
                 this.setRealtimeDiagnostic('lastError', '');
+                this.setRealtimeDiagnostic('reconnectDelaySec', 0);
+
+                socket.isAlive = true;
+                clearInterval(this.wsHeartbeatInterval);
+                this.wsHeartbeatInterval = setInterval(() => {
+                  if (this.isUnloading || socket.readyState !== WebSocket.OPEN) {
+                    return;
+                  }
+                  if (socket.isAlive === false) {
+                    this.wsHeartbeatTimeoutCount++;
+                    this.log.warn('Websocket heartbeat timeout - terminating stale connection');
+                    this.setRealtimeDiagnostic('heartbeatTimeoutCount', this.wsHeartbeatTimeoutCount);
+                    this.setRealtimeDiagnostic('lastError', 'WebSocket heartbeat timeout');
+                    socket.terminate();
+                    return;
+                  }
+                  socket.isAlive = false;
+                  try {
+                    socket.ping();
+                  } catch (error) {
+                    const errorText = error && error.message ? error.message : String(error);
+                    this.log.error('Websocket ping failed: ' + errorText);
+                    this.setRealtimeDiagnostic('lastError', 'WebSocket ping failed: ' + errorText);
+                    socket.terminate();
+                  }
+                }, 30 * 1000);
+
                 socket.send('{"protocol":"json","version":1}\u001e');
                 try {
                   await this.enterSD();
@@ -921,9 +966,18 @@ class Gruenbeck extends utils.Adapter {
                 });
               });
 
+              socket.on('pong', () => {
+                socket.isAlive = true;
+                this.setRealtimeDiagnostic('lastPong', new Date().toISOString());
+              });
+
               socket.on('close', (code, reason) => {
                 const closeReason = reason ? reason.toString() : '';
                 this.log.info('Websocket closed (code ' + code + (closeReason ? ', reason: ' + closeReason : '') + ')');
+                if (ws === socket) {
+                  clearInterval(this.wsHeartbeatInterval);
+                  this.wsHeartbeatInterval = null;
+                }
                 this.setRealtimeDiagnostic('wsConnected', false);
                 this.setRealtimeDiagnostic('lastClose', new Date().toISOString());
                 this.setRealtimeDiagnostic('lastCloseCode', code);
@@ -968,6 +1022,20 @@ class Gruenbeck extends utils.Adapter {
                       this.wsSignalRPingCount++;
                       this.setRealtimeDiagnostic('lastSignalRPing', messageTime);
                       this.setRealtimeDiagnostic('signalRPingCount', this.wsSignalRPingCount);
+                    } else if (message.type === 7) {
+                      const signalRCloseError = message.error ? String(message.error) : '';
+                      this.log.info(
+                        'SignalR requested websocket close' +
+                          (signalRCloseError ? ': ' + signalRCloseError : '') +
+                          (message.allowReconnect !== undefined ? ' (allowReconnect=' + message.allowReconnect + ')' : ''),
+                      );
+                      this.setRealtimeDiagnostic('lastSignalRClose', messageTime);
+                      this.setRealtimeDiagnostic('lastSignalRCloseError', signalRCloseError);
+                      if (signalRCloseError) {
+                        this.setRealtimeDiagnostic('lastError', 'SignalR close: ' + signalRCloseError);
+                      }
+                      socket.close(1000, 'SignalR close');
+                      continue;
                     }
                     if (message.target) {
                       this.setRealtimeDiagnostic('lastMessageTarget', message.target);
@@ -1191,6 +1259,7 @@ class Gruenbeck extends utils.Adapter {
     try {
       this.isUnloading = true;
       clearTimeout(this.wsReconnectTimeout);
+      clearInterval(this.wsHeartbeatInterval);
       clearTimeout(heartBeatTimeout);
       if (mgDeviceId) {
         this.leaveSD();
