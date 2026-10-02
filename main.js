@@ -35,7 +35,7 @@ let clockInterval;
 let powerModeInterval;
 let currentCommand = '';
 let blockTimeout;
-const heartBeatTimeout = null;
+let heartBeatTimeout;
 const queueArray = [];
 const parameterQueueArray = [];
 let blockConnection = false;
@@ -60,6 +60,12 @@ class Gruenbeck extends utils.Adapter {
       ...options,
       name: 'gruenbeck',
     });
+    this.wsReconnectTimeout = null;
+    this.wsReconnectCount = 0;
+    this.wsCurrentCount = 0;
+    this.wsCurrSlowCount = 0;
+    this.wsSignalRPingCount = 0;
+    this.isUnloading = false;
     this.on('ready', this.onReady.bind(this));
     this.on('objectChange', this.onObjectChange.bind(this));
     this.on('stateChange', this.onStateChange.bind(this));
@@ -119,6 +125,7 @@ class Gruenbeck extends utils.Adapter {
       }
       await this.login();
       await this.getMgDevices();
+      await this.initRealtimeDiagnostics();
       this.parseMgInfos();
 
       this.parseMgInfos('parameters');
@@ -433,6 +440,7 @@ class Gruenbeck extends utils.Adapter {
             }
           }
           if (response.status < 400) {
+            this.setRealtimeDiagnostic('lastRefresh', new Date().toISOString());
             resolve();
           } else {
             reject();
@@ -468,6 +476,7 @@ class Gruenbeck extends utils.Adapter {
           this.log.debug('enterSD response');
           this.log.debug(JSON.stringify(response.data));
           if (response.status < 400) {
+            this.setRealtimeDiagnostic('lastEnter', new Date().toISOString());
             // heartBeatTimeout = setTimeout(() => {
             //   this.log.error('No Data since 2min start login');
             //   this.login().then(() => {
@@ -738,8 +747,97 @@ class Gruenbeck extends utils.Adapter {
     });
   }
 
+  async initRealtimeDiagnostics() {
+    const prefix = (mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.Diagnostics';
+    await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream', {
+      type: 'channel',
+      common: {
+        name: 'Streaminformation via myGruenbeck SD/SE',
+      },
+      native: {},
+    });
+    await this.setObjectNotExistsAsync(prefix, {
+      type: 'channel',
+      common: {
+        name: 'Realtime Stream Diagnose',
+      },
+      native: {},
+    });
+
+    const diagnostics = {
+      wsConnected: { name: 'WebSocket verbunden', type: 'boolean' },
+      lastOpen: { name: 'Letzter WebSocket Open', type: 'string' },
+      lastClose: { name: 'Letzter WebSocket Close', type: 'string' },
+      lastCloseCode: { name: 'Letzter WebSocket Close Code', type: 'number' },
+      lastCloseReason: { name: 'Letzter WebSocket Close Grund', type: 'string' },
+      lastError: { name: 'Letzter WebSocket Fehler', type: 'string' },
+      lastWsMessage: { name: 'Letzte WebSocket Nachricht', type: 'string' },
+      lastSignalRPing: { name: 'Letzter SignalR Ping (type 6)', type: 'string' },
+      lastCurrent: { name: 'Letztes Current Telegramm', type: 'string' },
+      lastCurrSlow: { name: 'Letztes CurrSlow Telegramm', type: 'string' },
+      lastMessageTarget: { name: 'Letztes SignalR Target', type: 'string' },
+      lastEnter: { name: 'Letztes erfolgreiches realtime enter', type: 'string' },
+      lastRefresh: { name: 'Letztes erfolgreiches realtime refresh', type: 'string' },
+      currentCount: { name: 'Current Telegramme seit Adapterstart', type: 'number' },
+      currSlowCount: { name: 'CurrSlow Telegramme seit Adapterstart', type: 'number' },
+      signalRPingCount: { name: 'SignalR Pings seit Adapterstart', type: 'number' },
+      reconnectCount: { name: 'WebSocket Reconnects seit Adapterstart', type: 'number' },
+    };
+
+    for (const id in diagnostics) {
+      await this.setObjectNotExistsAsync(prefix + '.' + id, {
+        type: 'state',
+        common: {
+          name: diagnostics[id].name,
+          type: diagnostics[id].type,
+          role: 'indicator',
+          write: false,
+          read: true,
+        },
+        native: {},
+      });
+    }
+
+    this.setRealtimeDiagnostic('wsConnected', false);
+    this.setRealtimeDiagnostic('currentCount', 0);
+    this.setRealtimeDiagnostic('currSlowCount', 0);
+    this.setRealtimeDiagnostic('signalRPingCount', 0);
+    this.setRealtimeDiagnostic('reconnectCount', 0);
+  }
+
+  setRealtimeDiagnostic(id, value) {
+    if (!mgDeviceId) {
+      return;
+    }
+    const prefix = (mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.Diagnostics.';
+    this.setState(prefix + id, value, true);
+  }
+
+  scheduleMgWebSocketReconnect(reason) {
+    if (this.isUnloading || this.wsReconnectTimeout) {
+      return;
+    }
+    this.log.info('Websocket reconnect in 5 seconds (' + reason + ')');
+    this.wsReconnectTimeout = setTimeout(() => {
+      this.wsReconnectTimeout = null;
+      if (this.isUnloading) {
+        return;
+      }
+      this.wsReconnectCount++;
+      this.setRealtimeDiagnostic('reconnectCount', this.wsReconnectCount);
+      this.connectMgWebSocket();
+    }, 5000);
+  }
+
   connectMgWebSocket() {
-    //eslint-disable-next-line
+    if (this.isUnloading) {
+      return;
+    }
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+      this.log.debug('Websocket is already connected or connecting');
+      return;
+    }
+
     const axiosConfig = {
       headers: {
         'Content-Type': 'text/plain;charset=UTF-8',
@@ -756,148 +854,192 @@ class Gruenbeck extends utils.Adapter {
       .get('https://prod-eu-gruenbeck-api.azurewebsites.net/api/realtime/negotiate', axiosConfig)
       .then((response) => {
         this.log.debug(JSON.stringify(response.data));
-        if (response.data) {
-          // let wsUrl = response.data.url;
-          wsAccessToken = response.data.accessToken;
-          const axiosPostConfig = {
-            headers: {
-              'Content-Type': 'text/plain;charset=UTF-8',
-              Origin: 'file://',
-              Accept: '*/*',
-              'User-Agent': 'Gruenbeck/354 CFNetwork/1209 Darwin/20.2.0',
-              Authorization: 'Bearer ' + wsAccessToken,
-              'Accept-Language': 'de-de',
-              'X-Requested-With': 'XMLHttpRequest',
-            },
-          };
-          axios
-            .post('https://prod-eu-gruenbeck-signalr.service.signalr.net/client/negotiate?hub=gruenbeck', {}, axiosPostConfig)
-            .then((response) => {
-              this.log.debug(JSON.stringify(response.data));
-              if (response.data) {
-                try {
-                  wsConnectionId = response.data.connectionId;
-
-                  ws = new WebSocket(
-                    'wss://prod-eu-gruenbeck-signalr.service.signalr.net/client/?hub=gruenbeck&id=' +
-                      wsConnectionId +
-                      '&access_token=' +
-                      wsAccessToken,
-                    {
-                      headers: {
-                        Upgrade: 'websocket',
-                        Host: 'prod-eu-gruenbeck-signalr.service.signalr.net',
-                        Origin: 'null',
-                        Pragma: 'no-cache',
-                        'Cache-Control': 'no-cache',
-                        'User-Agent':
-                          'Mozilla/5.0 (iPhone; CPU iPhone OS 14_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-                      },
-                    },
-                  );
-
-                  ws.on('open', async () => {
-                    this.log.debug('WS connected');
-                    ws.send('{"protocol":"json","version":1}');
-                    await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream', {
-                      type: 'channel',
-                      common: {
-                        name: 'Streaminformation via myGruenbeck SD/SE',
-                      },
-                      native: {},
-                    });
-                  });
-                  ws.on('close', (data) => {
-                    this.log.info(data);
-                    this.log.info('Websocket closed');
-                  });
-                  ws.on('error', (error) => {
-                    this.log.error(error);
-                    this.log.info('Reconnect in 5 seconds');
-                    try {
-                      ws.close();
-                      setTimeout(() => {
-                        this.connectMgWebSocket();
-                      }, 5000);
-                    } catch (error) {
-                      this.log.error(error);
-                    }
-                  });
-                  ws.on('message', (data, isBinary) => {
-                    data = isBinary ? data : data.toString();
-                    this.log.debug(data);
-                    let dataCleaned;
-                    clearTimeout(heartBeatTimeout);
-                    try {
-                      const dataSplit = data.split('');
-                      for (const dataElement of dataSplit) {
-                        if (!dataElement) {
-                          continue;
-                        }
-                        dataCleaned = dataElement;
-                        this.log.debug('element: ' + dataCleaned);
-                        const message = JSON.parse(dataCleaned);
-                        if (message.arguments) {
-                          message.arguments.forEach(async (argument) => {
-                            for (const key in argument) {
-                              await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key, {
-                                type: 'state',
-                                common: {
-                                  name: descriptions[key] || key,
-                                  type: typeof argument[key],
-                                  role: 'indicator',
-                                  write: false,
-                                  read: true,
-                                },
-                                native: {},
-                              });
-                              if (Array.isArray(response.data[key])) {
-                                this.setState(
-                                  (mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key,
-                                  JSON.stringify(argument[key]),
-                                  true,
-                                );
-                              } else {
-                                this.setState((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key, argument[key], true);
-                              }
-                            }
-                          });
-                        }
-                      }
-                    } catch (error) {
-                      this.log.error('Websocket parse error');
-                      this.log.error(error);
-                      this.log.error(data);
-                      dataCleaned && this.log.error(dataCleaned);
-                      try {
-                        ws.close();
-                        setTimeout(() => {
-                          this.connectMgWebSocket();
-                        }, 5000);
-                      } catch (error) {
-                        this.log.error(error);
-                      }
-                    }
-                  });
-                } catch (error) {
-                  this.log.error(error);
-                  this.log.debug(response.data);
-                }
-              }
-            })
-            .catch((error) => {
-              // handle error
-              this.log.error(error);
-            });
-        } else {
+        if (!response.data) {
           this.log.debug('No data');
+          return;
         }
+
+        wsAccessToken = response.data.accessToken;
+        const axiosPostConfig = {
+          headers: {
+            'Content-Type': 'text/plain;charset=UTF-8',
+            Origin: 'file://',
+            Accept: '*/*',
+            'User-Agent': 'Gruenbeck/354 CFNetwork/1209 Darwin/20.2.0',
+            Authorization: 'Bearer ' + wsAccessToken,
+            'Accept-Language': 'de-de',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        };
+        axios
+          .post('https://prod-eu-gruenbeck-signalr.service.signalr.net/client/negotiate?hub=gruenbeck', {}, axiosPostConfig)
+          .then((response) => {
+            this.log.debug(JSON.stringify(response.data));
+            if (!response.data) {
+              return;
+            }
+
+            try {
+              wsConnectionId = response.data.connectionId;
+              const socket = new WebSocket(
+                'wss://prod-eu-gruenbeck-signalr.service.signalr.net/client/?hub=gruenbeck&id=' +
+                  wsConnectionId +
+                  '&access_token=' +
+                  wsAccessToken,
+                {
+                  headers: {
+                    Upgrade: 'websocket',
+                    Host: 'prod-eu-gruenbeck-signalr.service.signalr.net',
+                    Origin: 'null',
+                    Pragma: 'no-cache',
+                    'Cache-Control': 'no-cache',
+                    'User-Agent':
+                      'Mozilla/5.0 (iPhone; CPU iPhone OS 14_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+                  },
+                },
+              );
+              ws = socket;
+
+              socket.on('open', async () => {
+                this.log.debug('WS connected');
+                this.setRealtimeDiagnostic('wsConnected', true);
+                this.setRealtimeDiagnostic('lastOpen', new Date().toISOString());
+                this.setRealtimeDiagnostic('lastError', '');
+                socket.send('{"protocol":"json","version":1}\\u001e');
+                await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream', {
+                  type: 'channel',
+                  common: {
+                    name: 'Streaminformation via myGruenbeck SD/SE',
+                  },
+                  native: {},
+                });
+              });
+
+              socket.on('close', (code, reason) => {
+                const closeReason = reason ? reason.toString() : '';
+                this.log.info('Websocket closed (code ' + code + (closeReason ? ', reason: ' + closeReason : '') + ')');
+                this.setRealtimeDiagnostic('wsConnected', false);
+                this.setRealtimeDiagnostic('lastClose', new Date().toISOString());
+                this.setRealtimeDiagnostic('lastCloseCode', code);
+                this.setRealtimeDiagnostic('lastCloseReason', closeReason);
+                if (ws === socket) {
+                  ws = null;
+                }
+                this.scheduleMgWebSocketReconnect('close ' + code);
+              });
+
+              socket.on('error', (error) => {
+                const errorText = error && error.message ? error.message : String(error);
+                this.log.error(errorText);
+                this.setRealtimeDiagnostic('lastError', errorText);
+                this.setRealtimeDiagnostic('wsConnected', false);
+                this.scheduleMgWebSocketReconnect('error');
+                try {
+                  socket.close();
+                } catch (closeError) {
+                  this.log.error(closeError);
+                }
+              });
+
+              socket.on('message', (data) => {
+                data = data.toString();
+                const messageTime = new Date().toISOString();
+                this.setRealtimeDiagnostic('lastWsMessage', messageTime);
+                this.log.debug(data);
+                let dataCleaned;
+                clearTimeout(heartBeatTimeout);
+                try {
+                  const dataSplit = data.split('\\u001e');
+                  for (const dataElement of dataSplit) {
+                    if (!dataElement) {
+                      continue;
+                    }
+                    dataCleaned = dataElement;
+                    this.log.debug('element: ' + dataCleaned);
+                    const message = JSON.parse(dataCleaned);
+
+                    if (message.type === 6) {
+                      this.wsSignalRPingCount++;
+                      this.setRealtimeDiagnostic('lastSignalRPing', messageTime);
+                      this.setRealtimeDiagnostic('signalRPingCount', this.wsSignalRPingCount);
+                    }
+                    if (message.target) {
+                      this.setRealtimeDiagnostic('lastMessageTarget', message.target);
+                    }
+                    if (message.arguments) {
+                      message.arguments.forEach(async (argument) => {
+                        if (argument && argument.type === 'Current') {
+                          this.wsCurrentCount++;
+                          this.setRealtimeDiagnostic('lastCurrent', messageTime);
+                          this.setRealtimeDiagnostic('currentCount', this.wsCurrentCount);
+                        } else if (argument && argument.type === 'CurrSlow') {
+                          this.wsCurrSlowCount++;
+                          this.setRealtimeDiagnostic('lastCurrSlow', messageTime);
+                          this.setRealtimeDiagnostic('currSlowCount', this.wsCurrSlowCount);
+                        }
+
+                        for (const key in argument) {
+                          await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key, {
+                            type: 'state',
+                            common: {
+                              name: descriptions[key] || key,
+                              type: typeof argument[key],
+                              role: 'indicator',
+                              write: false,
+                              read: true,
+                            },
+                            native: {},
+                          });
+                          if (Array.isArray(argument[key])) {
+                            this.setState(
+                              (mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key,
+                              JSON.stringify(argument[key]),
+                              true,
+                            );
+                          } else {
+                            this.setState((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream.' + key, argument[key], true);
+                          }
+                        }
+                      });
+                    }
+                  }
+                } catch (error) {
+                  const errorText = error && error.message ? error.message : String(error);
+                  this.log.error('Websocket parse error');
+                  this.log.error(errorText);
+                  this.log.error(data);
+                  dataCleaned && this.log.error(dataCleaned);
+                  this.setRealtimeDiagnostic('lastError', 'Parse error: ' + errorText);
+                  this.scheduleMgWebSocketReconnect('parse error');
+                  try {
+                    socket.close();
+                  } catch (closeError) {
+                    this.log.error(closeError);
+                  }
+                }
+              });
+            } catch (error) {
+              const errorText = error && error.message ? error.message : String(error);
+              this.log.error(errorText);
+              this.setRealtimeDiagnostic('lastError', errorText);
+              this.scheduleMgWebSocketReconnect('websocket setup error');
+            }
+          })
+          .catch((error) => {
+            const errorText = error && error.message ? error.message : String(error);
+            this.log.error(errorText);
+            this.setRealtimeDiagnostic('lastError', errorText);
+            this.scheduleMgWebSocketReconnect('SignalR negotiate error');
+          });
       })
       .catch((error) => {
-        // handle error
-        this.log.error(error);
+        const errorText = error && error.message ? error.message : String(error);
+        this.log.error(errorText);
+        this.setRealtimeDiagnostic('lastError', errorText);
+        this.scheduleMgWebSocketReconnect('API negotiate error');
       });
   }
+
   startRefreshToken() {
     this.log.debug('Start Refresh Token');
     const axiosPostConfig = {
@@ -1041,6 +1183,9 @@ class Gruenbeck extends utils.Adapter {
    */
   onUnload(callback) {
     try {
+      this.isUnloading = true;
+      clearTimeout(this.wsReconnectTimeout);
+      clearTimeout(heartBeatTimeout);
       if (mgDeviceId) {
         this.leaveSD();
       }
@@ -1050,7 +1195,6 @@ class Gruenbeck extends utils.Adapter {
       clearInterval(dailyInterval);
       clearInterval(errorInterval);
       clearInterval(impulsInterval);
-      clearInterval(clockInterval);
       clearInterval(clockInterval);
       clearInterval(powerModeInterval);
       try {
