@@ -905,7 +905,7 @@ class Gruenbeck extends utils.Adapter {
                 this.setRealtimeDiagnostic('wsConnected', true);
                 this.setRealtimeDiagnostic('lastOpen', new Date().toISOString());
                 this.setRealtimeDiagnostic('lastError', '');
-                socket.send('{"protocol":"json","version":1}\\u001e');
+                socket.send('{"protocol":"json","version":1}\u001e');
                 await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream', {
                   type: 'channel',
                   common: {
@@ -949,7 +949,7 @@ class Gruenbeck extends utils.Adapter {
                 let dataCleaned;
                 clearTimeout(heartBeatTimeout);
                 try {
-                  const dataSplit = data.split('\\u001e');
+                  const dataSplit = data.split('\u001e');
                   for (const dataElement of dataSplit) {
                     if (!dataElement) {
                       continue;
