@@ -112,6 +112,16 @@
 				<label for="mgIndex" class="translate">myGruenbeck SDXX Device Index for mutiple devices</label>
 				<span class="translate">myGruenbeck SDXX Device Index for mutiple devices</span>
 			</div>
+			<div class="input-field col col s6">
+				<input class="value" id="mgRegenKeepAlive" type="checkbox" />
+				<label for="mgRegenKeepAlive" class="translate">Live-Stream während Regeneration aktiv halten</label>
+				<span class="translate">Während einer Regeneration wird der Realtime-Stream per refreshSD alle 25 Sekunden aktiv gehalten.</span>
+			</div>
+			<div class="input-field col col s6">
+				<input class="value" id="mgDisableUpdateCall" type="checkbox" />
+				<label for="mgDisableUpdateCall" class="translate">Cloud /update Abfrage deaktivieren</label>
+				<span class="translate">Deaktiviert den zusätzlichen /update API-Aufruf, falls dieser mit HTTP 404 beantwortet wird. Realtime enter/refresh und WebSocket bleiben aktiv.</span>
+			</div>
 		</div>
 
 		<div class="row">
