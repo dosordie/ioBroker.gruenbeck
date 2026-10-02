@@ -1,8 +1,21 @@
 {
   "common": {
     "name": "gruenbeck",
-    "version": "0.0.46",
+    "version": "0.1.0",
     "news": {
+      "0.1.0": {
+        "en": "Improve myGrünbeck realtime reliability with WebSocket diagnostics, heartbeat/reconnect handling, regeneration live-stream keepalive and optional disabling of the unsupported /update request.",
+        "de": "myGrünbeck-Realtime verbessert: WebSocket-Diagnose, Heartbeat/Reconnect, Live-Stream-Keepalive während Regeneration und optionales Abschalten der nicht unterstützten /update-Abfrage.",
+        "ru": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "pt": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "nl": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "fr": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "it": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "es": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "pl": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "uk": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive.",
+        "zh-cn": "Improved myGrünbeck realtime reliability, diagnostics, reconnect handling and regeneration live-stream keepalive."
+      },
       "0.0.46": {
         "en": "add SE support and cleanup states",
         "de": "SE Support hinzugefügt und States aufgeräumt",
