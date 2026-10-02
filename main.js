@@ -136,15 +136,6 @@ class Gruenbeck extends utils.Adapter {
         this.log.error('Failed to get water');
       });
       this.connectMgWebSocket();
-      this.enterSD()
-        .then(() => {
-          this.refreshSD().catch(() => {
-            this.log.error('Failed refresh SD');
-          });
-        })
-        .catch(() => {
-          this.log.error('Failed enter SD');
-        });
       this.sdUpdate();
       allInterval = setInterval(() => {
         this.parseMgInfos();
@@ -170,7 +161,14 @@ class Gruenbeck extends utils.Adapter {
             this.log.info('Relogin');
             this.login().then(() => {
               this.log.debug('Reconnect');
-              this.connectMgWebSocket();
+              try {
+                if (ws) {
+                  ws.close();
+                }
+              } catch (error) {
+                this.log.error(error);
+              }
+              this.scheduleMgWebSocketReconnect('relogin');
             });
           });
       }, this.config.mgInterval * 1000);
@@ -906,6 +904,14 @@ class Gruenbeck extends utils.Adapter {
                 this.setRealtimeDiagnostic('lastOpen', new Date().toISOString());
                 this.setRealtimeDiagnostic('lastError', '');
                 socket.send('{"protocol":"json","version":1}\u001e');
+                try {
+                  await this.enterSD();
+                  await this.refreshSD();
+                } catch (error) {
+                  const errorText = error && error.message ? error.message : String(error);
+                  this.log.error('Failed to activate realtime stream: ' + errorText);
+                  this.setRealtimeDiagnostic('lastError', 'Realtime activation failed: ' + errorText);
+                }
                 await this.setObjectNotExistsAsync((mgDeviceIdEscaped ? mgDeviceIdEscaped : mgDeviceId) + '.Stream', {
                   type: 'channel',
                   common: {
@@ -1198,7 +1204,9 @@ class Gruenbeck extends utils.Adapter {
       clearInterval(clockInterval);
       clearInterval(powerModeInterval);
       try {
-        ws.close();
+        if (ws) {
+          ws.close();
+        }
       } catch (error) {
         this.log.error(error);
       }
