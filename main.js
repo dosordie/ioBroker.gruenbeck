@@ -917,6 +917,7 @@ class Gruenbeck extends utils.Adapter {
                 },
               );
               ws = socket;
+              let socketAlive = true;
 
               socket.on('open', async () => {
                 this.log.debug('WS connected');
@@ -924,13 +925,13 @@ class Gruenbeck extends utils.Adapter {
                 this.setRealtimeDiagnostic('lastOpen', new Date().toISOString());
                 this.setRealtimeDiagnostic('lastError', '');
 
-                socket.isAlive = true;
+                socketAlive = true;
                 clearInterval(this.wsHeartbeatInterval);
                 this.wsHeartbeatInterval = setInterval(() => {
                   if (this.isUnloading || socket.readyState !== WebSocket.OPEN) {
                     return;
                   }
-                  if (socket.isAlive === false) {
+                  if (socketAlive === false) {
                     this.wsHeartbeatTimeoutCount++;
                     this.log.warn('Websocket heartbeat timeout - terminating stale connection');
                     this.setRealtimeDiagnostic('heartbeatTimeoutCount', this.wsHeartbeatTimeoutCount);
@@ -938,7 +939,7 @@ class Gruenbeck extends utils.Adapter {
                     socket.terminate();
                     return;
                   }
-                  socket.isAlive = false;
+                  socketAlive = false;
                   try {
                     socket.ping();
                   } catch (error) {
@@ -970,7 +971,7 @@ class Gruenbeck extends utils.Adapter {
               });
 
               socket.on('pong', () => {
-                socket.isAlive = true;
+                socketAlive = true;
                 this.setRealtimeDiagnostic('lastPong', new Date().toISOString());
               });
 
