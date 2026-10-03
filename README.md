@@ -3,14 +3,7 @@
  ioBroker.gruenbeck
 </h1>
 
-[![NPM version](http://img.shields.io/npm/v/iobroker.gruenbeck.svg)](https://www.npmjs.com/package/iobroker.gruenbeck)
-[![Downloads](https://img.shields.io/npm/dm/iobroker.gruenbeck.svg)](https://www.npmjs.com/package/iobroker.gruenbeck)
-[![Dependency Status](https://img.shields.io/david/TA2k/iobroker.gruenbeck.svg)](https://david-dm.org/TA2k/iobroker.gruenbeck)
-[![Known Vulnerabilities](https://snyk.io/test/github/TA2k/ioBroker.gruenbeck/badge.svg)](https://snyk.io/test/github/TA2k/ioBroker.gruenbeck)
 
-[![NPM](https://nodei.co/npm/iobroker.gruenbeck.png?downloads=true)](https://nodei.co/npm/iobroker.gruenbeck/)
-
-**Tests:**: [![Travis-CI](http://img.shields.io/travis/TA2k/ioBroker.gruenbeck/master.svg)](https://travis-ci.org/TA2k/ioBroker.gruenbeck)
 
 ## gruenbeck adapter for ioBroker
 
